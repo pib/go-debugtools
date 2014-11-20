@@ -67,7 +67,7 @@ func (s *deepEqualState) deepValueEqual(v1, v2 reflect.Value) bool {
 	defer s.decDepth()
 
 	if !v1.IsValid() || !v2.IsValid() {
-		s.println("Something is not valid")
+		s.println("Something is not valid:", v1, v2)
 		return v1.IsValid() == v2.IsValid()
 	}
 	if v1.Type() != v2.Type() {
