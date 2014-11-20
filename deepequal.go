@@ -1,8 +1,11 @@
 package debugtools
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"reflect"
+	"strings"
 )
 
 // Derived from reflect.DeepEqual
@@ -23,16 +26,52 @@ type visit struct {
 	typ reflect.Type
 }
 
+type deepEqualState struct {
+	visited map[visit]bool
+	depth   int
+	sub     bool
+	w       io.Writer
+}
+
+func (s *deepEqualState) println(vals ...interface{}) {
+	if s.sub {
+		s.sub = false
+	} else if s.depth > 0 {
+		fmt.Fprint(s.w, strings.Repeat("  ", s.depth))
+	}
+	fmt.Fprintln(s.w, vals...)
+}
+
+func (s *deepEqualState) printf(format string, vals ...interface{}) {
+	if s.sub {
+		s.sub = false
+	} else if s.depth > 0 {
+		fmt.Fprint(s.w, strings.Repeat("  ", s.depth))
+	}
+	fmt.Fprintf(s.w, format, vals...)
+}
+
+func (s *deepEqualState) incDepth() {
+	s.depth++
+}
+
+func (s *deepEqualState) decDepth() {
+	s.depth--
+}
+
 // Tests for deep equality using reflected types. The map argument tracks
 // comparisons that have already been seen, which allows short circuiting on
 // recursive types.
-func deepValueEqual(v1, v2 reflect.Value, visited map[visit]bool, depth int) bool {
+func (s *deepEqualState) deepValueEqual(v1, v2 reflect.Value) bool {
+	s.incDepth()
+	defer s.decDepth()
+
 	if !v1.IsValid() || !v2.IsValid() {
-		fmt.Println("Something is not valid")
+		s.println("Something is not valid")
 		return v1.IsValid() == v2.IsValid()
 	}
 	if v1.Type() != v2.Type() {
-		fmt.Println("Types don't match")
+		s.println("Types don't match")
 		return false
 	}
 
@@ -55,97 +94,111 @@ func deepValueEqual(v1, v2 reflect.Value, visited map[visit]bool, depth int) boo
 
 		// Short circuit if references are identical ...
 		if addr1 == addr2 {
-			fmt.Println("Same address, so equal")
+			s.println("  Same address, so equal")
 			return true
 		}
 
 		// ... or already seen
 		typ := v1.Type()
 		v := visit{addr1, addr2, typ}
-		if visited[v] {
-			fmt.Println("Already visited, so equal")
+		if s.visited[v] {
+			s.println("  Already visited, so equal")
 			return true
 		}
 
 		// Remember for later.
-		visited[v] = true
+		s.visited[v] = true
 	}
 
 	switch v1.Kind() {
 	case reflect.Array:
-		fmt.Println("Comparing arrays ", v1, v2)
+		s.println("Comparing arrays of type:", v1.Type())
 		for i := 0; i < v1.Len(); i++ {
-			if !deepValueEqual(v1.Index(i), v2.Index(i), visited, depth+1) {
+			if !s.deepValueEqual(v1.Index(i), v2.Index(i)) {
 				return false
 			}
 		}
 		return true
 	case reflect.Slice:
-		fmt.Println("Comparing slices ", v1, v2)
+		s.println("Comparing slices of type:", v1.Type())
 		if v1.IsNil() != v2.IsNil() {
-			fmt.Println("One of the slices is nil, so not equal")
+			s.printf("  %#v != %#v\n", v1.Interface(), v2.Interface())
+			s.println("  One of the slices is nil, so not equal")
 			return false
 		}
 		if v1.Len() != v2.Len() {
-			fmt.Println("Unequal lengths, so not equal")
+			s.println("  Unequal lengths, so not equal")
 			return false
 		}
 		if v1.Pointer() == v2.Pointer() {
-			fmt.Println("Pointers equal, so equal")
+			s.println("  Pointers equal, so equal")
 			return true
 		}
 		for i := 0; i < v1.Len(); i++ {
-			if !deepValueEqual(v1.Index(i), v2.Index(i), visited, depth+1) {
+			if !s.deepValueEqual(v1.Index(i), v2.Index(i)) {
 				return false
 			}
 		}
 		return true
 	case reflect.Interface:
-		fmt.Println("Comparing interfaces ", v1, v2)
+		s.println("Comparing interfaces of type:", v1.Type())
 		if v1.IsNil() || v2.IsNil() {
-			fmt.Println("One is nil, so not equal")
+			s.println("  One of the interfaces is nil, so not equal")
 			return v1.IsNil() == v2.IsNil()
 		}
-		return deepValueEqual(v1.Elem(), v2.Elem(), visited, depth+1)
+		return s.deepValueEqual(v1.Elem(), v2.Elem())
 	case reflect.Ptr:
-		fmt.Println("Comparing pointers: ", v1.Elem(), v2.Elem())
-		return deepValueEqual(v1.Elem(), v2.Elem(), visited, depth+1)
+		s.println("Comparing pointers of type:", v1.Type())
+		return s.deepValueEqual(v1.Elem(), v2.Elem())
 	case reflect.Struct:
-		fmt.Println("Comparing structs", v1, v2)
+		s.println("Comparing structs of type:", v1.Type())
 		for i, n := 0, v1.NumField(); i < n; i++ {
-			fmt.Println("Comparing field ", v1.Type().Field(i).Name)
-			if !deepValueEqual(v1.Field(i), v2.Field(i), visited, depth+1) {
+			s.printf("  %v: ", v1.Type().Field(i).Name)
+			s.sub = true
+			if !s.deepValueEqual(v1.Field(i), v2.Field(i)) {
 				return false
 			}
 		}
 		return true
 	case reflect.Map:
-		fmt.Println("Comparing map:")
+		s.println("Comparing map of type:", v1.Type())
 		if v1.IsNil() != v2.IsNil() {
+			s.println("  One of the maps is nil, so not equal")
 			return false
 		}
 		if v1.Len() != v2.Len() {
+			s.println("  Lengths don't match, so not equal")
 			return false
 		}
 		if v1.Pointer() == v2.Pointer() {
+			s.println("  Same pointer, so equal")
 			return true
 		}
 		for _, k := range v1.MapKeys() {
-			fmt.Println("Comparing map key: ", k)
-			if !deepValueEqual(v1.MapIndex(k), v2.MapIndex(k), visited, depth+1) {
+			s.printf("%#v: ", k)
+			s.sub = true
+			if !s.deepValueEqual(v1.MapIndex(k), v2.MapIndex(k)) {
 				return false
 			}
 		}
 		return true
 	case reflect.Func:
 		if v1.IsNil() && v2.IsNil() {
+			s.println("  Both nil functions, so equal")
 			return true
 		}
 		// Can't do better than this:
+		s.println("  Not both nil functions, so not equal")
 		return false
 	default:
 		// Normal equality suffices
-		return reflect.DeepEqual(v1, v2)
+		if eq := reflect.DeepEqual(v1.Interface(), v2.Interface()); eq {
+			s.printf("%#v == %#v\n", v1.Interface(), v2.Interface())
+			return true
+		} else {
+			s.println(v1, "!=", v2)
+			return false
+		}
 	}
 }
 
@@ -155,14 +208,21 @@ func deepValueEqual(v1, v2 reflect.Value, visited map[visit]bool, depth int) boo
 // equality. DeepEqual correctly handles recursive types. Functions are equal
 // only if they are both nil.
 // An empty slice is not equal to a nil slice.
-func DeepEqual(a1, a2 interface{}) bool {
+func DeepEqual(a1, a2 interface{}) (bool, string) {
 	if a1 == nil || a2 == nil {
-		return a1 == a2
+		return a1 == a2, ""
 	}
 	v1 := reflect.ValueOf(a1)
 	v2 := reflect.ValueOf(a2)
 	if v1.Type() != v2.Type() {
-		return false
+		return false, ""
 	}
-	return deepValueEqual(v1, v2, make(map[visit]bool), 0)
+	buf := &bytes.Buffer{}
+	s := &deepEqualState{
+		visited: make(map[visit]bool),
+		depth:   -1,
+		sub:     false,
+		w:       buf,
+	}
+	return s.deepValueEqual(v1, v2), string(buf.Bytes())
 }
