@@ -196,7 +196,7 @@ func (s *deepEqualState) deepValueEqual(v1, v2 reflect.Value) bool {
 			s.printf("%#v == %#v\n", v1.Interface(), v2.Interface())
 			return true
 		} else {
-			s.println(v1, "!=", v2)
+			s.printf("%#v != %#v\n", v1.Interface(), v2.Interface())
 			return false
 		}
 	}
