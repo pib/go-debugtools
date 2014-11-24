@@ -190,15 +190,46 @@ func (s *deepEqualState) deepValueEqual(v1, v2 reflect.Value) bool {
 		// Can't do better than this:
 		s.println("  Not both nil functions, so not equal")
 		return false
+
 	default:
 		// Normal equality suffices
-		if eq := reflect.DeepEqual(v1.Interface(), v2.Interface()); eq {
-			s.printf("%#v == %#v\n", v1.Interface(), v2.Interface())
-			return true
+		if v1.CanInterface() && v2.CanInterface() {
+			if eq := reflect.DeepEqual(v1.Interface(), v2.Interface()); eq {
+				s.printf("%#v == %#v\n", v1.Interface(), v2.Interface())
+				return true
+			} else {
+				s.printf("%#v != %#v\n", v1.Interface(), v2.Interface())
+				return false
+			}
 		} else {
-			s.printf("%#v != %#v\n", v1.Interface(), v2.Interface())
-			return false
+			s1, s2 := anyString(v1), anyString(v2)
+			if s1 == s2 {
+				s.printf("%v == %v\n", s1, s2)
+				return true
+			} else {
+				s.printf("%v != %v\n", s1, s2)
+				return false
+			}
+
 		}
+	}
+}
+
+func anyString(val reflect.Value) string {
+	if val.CanInterface() {
+		return fmt.Sprintf("%#v", val.Interface())
+	}
+	switch val.Kind() {
+	case reflect.Bool:
+		return fmt.Sprintf("%#v", val.Bool())
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return fmt.Sprintf("%#v", val.Int())
+	case reflect.Float32, reflect.Float64:
+		return fmt.Sprintf("%#v", val.Float())
+	case reflect.Uintptr:
+		return fmt.Sprintf("%d", val.Uint())
+	default:
+		return fmt.Sprintf("%s: %#v", val.Kind(), val)
 	}
 }
 
