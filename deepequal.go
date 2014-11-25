@@ -71,7 +71,7 @@ func (s *deepEqualState) deepValueEqual(v1, v2 reflect.Value) bool {
 		return v1.IsValid() == v2.IsValid()
 	}
 	if v1.Type() != v2.Type() {
-		s.println("Types don't match")
+		s.printf("Types don't match: %v (%s) != %v (%s)", v1.Interface(), v1.Type(), v2.Interface(), v2.Type())
 		return false
 	}
 
@@ -175,7 +175,7 @@ func (s *deepEqualState) deepValueEqual(v1, v2 reflect.Value) bool {
 			return true
 		}
 		for _, k := range v1.MapKeys() {
-			s.printf("%#v: ", k)
+			s.printf("  %#v: ", k.Interface())
 			s.sub = true
 			if !s.deepValueEqual(v1.MapIndex(k), v2.MapIndex(k)) {
 				return false
